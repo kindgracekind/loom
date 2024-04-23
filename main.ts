@@ -100,6 +100,7 @@ export default class LoomPlugin extends Plugin {
   openai: OpenAIApi;
   azure: AzureOpenAIApi;
   anthropic: Anthropic;
+  llamafile: OpenAIApi;
   anthropicApiKey: string;
 
   rendering = false;
@@ -186,13 +187,20 @@ export default class LoomPlugin extends Plugin {
           "Access-Control-Allow-Credentials": "true",
         },
       });
+    } else if (preset.provider == "llamafile") {
+      const config = new Configuration({
+        basePath: "http://localhost:8081"
+      })
+      // https://github.com/openai/openai-node/issues/6
+      delete config.baseOptions.headers['User-Agent'];
+      this.llamafile = new OpenAIApi(config)
     }
   }
 
   apiKeySet() {
 	if (this.settings.modelPreset == -1) return false;
   const preset =  this.settings.modelPresets[this.settings.modelPreset]
-  if (preset.provider === "ollama") return true
+  if ( ["ollama", "llamafile"].includes(preset.provider)) return true
   return preset.apiKey != ""
   }
 
@@ -1285,6 +1293,7 @@ export default class LoomPlugin extends Plugin {
 	  "azure-chat": this.completeAzureChat,
     anthropic: this.completeAnthropic,
     ollama: this.completeOllama,
+    llamafile: this.completeLlamafile,
 	};
 	let result;
 	try {
@@ -1599,6 +1608,28 @@ export default class LoomPlugin extends Plugin {
     return result;
   }
 
+  async completeLlamafile(prompt: string) {
+    prompt = this.trimOpenAIPrompt(prompt);
+	  let result: CompletionResult;
+    try {
+      const response = await this.llamafile.createCompletion({
+          model: getPreset(this.settings).model,
+          prompt,
+          max_tokens: this.settings.maxTokens,
+          // n: this.settings.n,
+          temperature: this.settings.temperature,
+          top_p: this.settings.topP,
+        frequency_penalty: this.settings.frequencyPenalty,
+        presence_penalty: this.settings.presencePenalty,
+      });
+
+      result = { ok: true, completions: [response.data.content] };
+    } catch (e) {
+        result = { ok: false, status: e.response.status, message: e.response.data.error.message };
+    }
+    return result;
+  }
+
   async loadSettings() {
     const settings = (await this.loadData())?.settings || {};
     this.settings = Object.assign({}, DEFAULT_SETTINGS, settings);
@@ -1858,6 +1889,7 @@ class LoomSettingTab extends PluginSettingTab {
 	  	  "azure-chat": "Azure (Chat)",
         anthropic: "Anthropic",
         ollama: "ollama",
+        llamafile: "llamafile",
 	    };
 	    dropdown.addOptions(options);
 	    dropdown.setValue(this.plugin.settings.modelPresets[this.plugin.settings.modelPreset].provider);
